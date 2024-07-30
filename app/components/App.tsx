@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   LiveConnectionState,
   LiveTranscriptionEvent,
@@ -12,6 +12,7 @@ import {
   MicrophoneState,
   useMicrophone,
 } from "../context/MicrophoneContextProvider";
+import { GrokLlmClient } from "../llm_grok";
 import Visualizer from "./Visualizer";
 
 const App: () => JSX.Element = () => {
@@ -23,6 +24,35 @@ const App: () => JSX.Element = () => {
     useMicrophone();
   const captionTimeout = useRef<any>();
   const keepAliveInterval = useRef<any>();
+  const [grokClient] = useState(() => new GrokLlmClient());
+  const [aiResponse, setAiResponse] = useState<string | undefined>(undefined);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+
+  const textToSpeech = useCallback(async (text: string) => {
+    try {
+      const response = await fetch("/api/authenticate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Network response was not ok");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      setAudioUrl(url);
+
+      // Play the audio
+      const audio = new Audio(url);
+      audio.play();
+    } catch (error) {
+      console.error("Error in text-to-speech:", error);
+    }
+  }, []);
 
   useEffect(() => {
     setupMicrophone();
@@ -48,13 +78,13 @@ const App: () => JSX.Element = () => {
 
     const onData = (e: BlobEvent) => {
       // iOS SAFARI FIX:
-      // Prevent packetZero from being sent. If sent at size 0, the connection will close. 
+      // Prevent packetZero from being sent. If sent at size 0, the connection will close.
       if (e.data.size > 0) {
         connection?.send(e.data);
       }
     };
 
-    const onTranscript = (data: LiveTranscriptionEvent) => {
+    const onTranscript = async (data: LiveTranscriptionEvent) => {
       const { is_final: isFinal, speech_final: speechFinal } = data;
       let thisCaption = data.channel.alternatives[0].transcript;
 
@@ -62,6 +92,18 @@ const App: () => JSX.Element = () => {
       if (thisCaption !== "") {
         console.log('thisCaption !== ""', thisCaption);
         setCaption(thisCaption);
+
+        if (isFinal) {
+          try {
+            const response = await grokClient.DraftResponse(thisCaption);
+            console.log(response);
+            setAiResponse(response);
+            // Call text-to-speech with the AI response
+            await textToSpeech(response);
+          } catch (error) {
+            console.error("Error getting AI response:", error);
+          }
+        }
       }
 
       if (isFinal && speechFinal) {
@@ -87,7 +129,7 @@ const App: () => JSX.Element = () => {
       clearTimeout(captionTimeout.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionState]);
+  }, [connectionState, grokClient, textToSpeech]);
 
   useEffect(() => {
     if (!connection) return;
@@ -121,6 +163,11 @@ const App: () => JSX.Element = () => {
               {microphone && <Visualizer microphone={microphone} />}
               <div className="absolute bottom-[8rem]  inset-x-0 max-w-4xl mx-auto text-center">
                 {caption && <span className="bg-black/70 p-8">{caption}</span>}
+              </div>
+              <div className="absolute top-[2rem] inset-x-0 max-w-4xl mx-auto text-center">
+                {aiResponse && (
+                  <span className="bg-blue-500/70 p-8">{aiResponse}</span>
+                )}
               </div>
             </div>
           </div>

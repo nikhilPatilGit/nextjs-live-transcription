@@ -1,4 +1,5 @@
 import { DeepgramError, createClient } from "@deepgram/sdk";
+import https from "https";
 import { NextResponse, type NextRequest } from "next/server";
 
 export const revalidate = 0;
@@ -53,4 +54,50 @@ export async function GET(request: NextRequest) {
   response.headers.set("Expires", "0");
 
   return response;
+}
+
+export async function POST(request: NextRequest) {
+  const DEEPGRAM_URL =
+    "https://api.deepgram.com/v1/speak?model=aura-asteria-en";
+  const DEEPGRAM_API_KEY = "YOUR KEY";
+
+  const { text } = await request.json();
+
+  const payload = JSON.stringify({ text });
+
+  const requestConfig = {
+    method: "POST",
+    headers: {
+      Authorization: `Token ${DEEPGRAM_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+  };
+
+  return new Response(
+    new ReadableStream({
+      async start(controller) {
+        const req = https.request(DEEPGRAM_URL, requestConfig, (res) => {
+          res.on("data", (chunk) => {
+            controller.enqueue(chunk);
+          });
+
+          res.on("end", () => {
+            controller.close();
+          });
+        });
+
+        req.on("error", (error) => {
+          controller.error(error);
+        });
+
+        req.write(payload);
+        req.end();
+      },
+    }),
+    {
+      headers: {
+        "Content-Type": "audio/mpeg",
+      },
+    }
+  );
 }
